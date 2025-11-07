@@ -1,0 +1,13 @@
+lambeq>=0.3.0
+pennylane>=0.30.0
+pennylane-lightning
+numpy
+pandas
+scikit-learn
+pytest
+flask
+werkzeug
+matplotlib
+seaborn
+plotly
+joblib

@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Upload Student Feedback CSV</title>
+  </head>
+  <body>
+    <h1>Upload Student Feedback CSV</h1>
+    <form method="post" action="/upload" enctype="multipart/form-data">
+      <input type="file" name="file" accept=".csv" required>
+      <button type="submit">Upload</button>
+    </form>
+    <p>CSV should contain at least a `feedback` column. Optional columns: `label` (positive/negative), `teacher`, `facility`.</p>
+  </body>
+</html>

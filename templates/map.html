@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Map Columns</title>
+  </head>
+  <body>
+    <h1>Map CSV Columns</h1>
+    <form method="post" action="/process">
+      <input type="hidden" name="filename" value="{{ filename }}">
+      <label for="feedback">Feedback column:</label>
+      <select name="feedback_col" required>
+        {% for h in headers %}
+        <option value="{{ h }}" {% if defaults.feedback==h %}selected{% endif %}>{{ h }}</option>
+        {% endfor %}
+      </select>
+      <br>
+      <label for="label">Label column (optional, values 'positive'/'negative'):</label>
+      <select name="label_col">
+        <option value="">-- none --</option>
+        {% for h in headers %}
+        <option value="{{ h }}" {% if defaults.label==h %}selected{% endif %}>{{ h }}</option>
+        {% endfor %}
+      </select>
+      <br>
+      <label for="teacher">Teacher column (optional):</label>
+      <select name="teacher_col">
+        <option value="">-- none --</option>
+        {% for h in headers %}
+        <option value="{{ h }}" {% if defaults.teacher==h %}selected{% endif %}>{{ h }}</option>
+        {% endfor %}
+      </select>
+      <br>
+      <label for="facility">Facility column (optional):</label>
+      <select name="facility_col">
+        <option value="">-- none --</option>
+        {% for h in headers %}
+        <option value="{{ h }}" {% if defaults.facility==h %}selected{% endif %}>{{ h }}</option>
+        {% endfor %}
+      </select>
+      <br>
+      <label for="branch">Branch (optional):</label>
+      <select name="branch_col">
+        <option value="">-- none --</option>
+        {% for h in headers %}
+        <option value="{{ h }}" {% if defaults.branch==h %}selected{% endif %}>{{ h }}</option>
+        {% endfor %}
+      </select>
+      <br>
+      <label for="department">Department (optional):</label>
+      <select name="department_col">
+        <option value="">-- none --</option>
+        {% for h in headers %}
+        <option value="{{ h }}" {% if defaults.department==h %}selected{% endif %}>{{ h }}</option>
+        {% endfor %}
+      </select>
+      <br>
+      <label for="use_model">Use existing model (optional):</label>
+      <select name="use_model">
+        <option value="">-- train new model --</option>
+        {% if existing_models %}
+          {% for m in existing_models %}
+            <option value="{{ m }}">{{ m }}</option>
+          {% endfor %}
+        {% endif %}
+      </select>
+      <br>
+      <button type="submit">Process</button>
+    </form>
+  </body>
+</html>
