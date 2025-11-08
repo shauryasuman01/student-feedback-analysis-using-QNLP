@@ -1,71 +1,250 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Map Columns</title>
+    <title>Map CSV Columns</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: 'Segoe UI', Tahoma, sans-serif;
+        background: linear-gradient(135deg, #f5f3ff, #eef2ff 42%, #f0fdfa);
+        color: #1f2933;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: clamp(1.5rem, 3vw, 3rem);
+      }
+
+      .panel {
+        width: min(960px, 100%);
+        background: rgba(255, 255, 255, 0.94);
+        border-radius: 26px;
+        box-shadow: 0 25px 60px rgba(15, 23, 42, 0.16);
+        padding: clamp(2.25rem, 3vw + 1rem, 3.5rem);
+      }
+
+      header {
+        margin-bottom: 2rem;
+      }
+
+      header span {
+        text-transform: uppercase;
+        font-size: 0.85rem;
+        letter-spacing: 0.1em;
+        color: #64748b;
+        font-weight: 600;
+      }
+
+      h1 {
+        margin: 0.35rem 0 0;
+        font-size: clamp(2.1rem, 3vw + 1rem, 2.8rem);
+        color: #1e293b;
+      }
+
+      p.lead {
+        margin: 0.75rem 0 0;
+        color: #475569;
+        font-size: 1.05rem;
+      }
+
+      form {
+        margin-top: 2rem;
+        display: grid;
+        gap: 1.5rem;
+      }
+
+      .field {
+        display: grid;
+        gap: 0.45rem;
+      }
+
+      label {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #334155;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
+      select {
+        appearance: none;
+        width: 100%;
+        padding: 0.85rem 1rem;
+        border: 1.5px solid rgba(99, 102, 241, 0.25);
+        border-radius: 14px;
+        background: rgba(226, 232, 240, 0.35);
+        font-size: 1rem;
+        color: #1f2933;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      }
+
+      select:focus {
+        outline: none;
+        border-color: #4f46e5;
+        box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2);
+      }
+
+      .optional {
+        font-size: 0.8rem;
+        text-transform: none;
+        letter-spacing: 0;
+        color: #64748b;
+        font-weight: 500;
+      }
+
+      button {
+        justify-self: flex-start;
+        padding: 0.85rem 1.9rem;
+        border: none;
+        border-radius: 999px;
+        font-size: 1rem;
+        font-weight: 600;
+        background: linear-gradient(120deg, #4f46e5, #22d3ee);
+        color: #fff;
+        cursor: pointer;
+        box-shadow: 0 15px 32px rgba(79, 70, 229, 0.28);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 20px 40px rgba(79, 70, 229, 0.35);
+      }
+
+      .note {
+        margin-top: 1.5rem;
+        font-size: 0.9rem;
+        color: #64748b;
+      }
+
+      .return-link {
+        margin-top: 2rem;
+        display: inline-flex;
+        gap: 0.4rem;
+        align-items: center;
+        color: #2563eb;
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .return-link:hover {
+        text-decoration: underline;
+      }
+
+      @media (min-width: 720px) {
+        form {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        form button {
+          grid-column: 1 / -1;
+        }
+      }
+
+      @media (max-width: 640px) {
+        body {
+          padding: 1.25rem;
+        }
+      }
+    </style>
   </head>
   <body>
-    <h1>Map CSV Columns</h1>
-    <form method="post" action="/process">
-      <input type="hidden" name="filename" value="{{ filename }}">
-      <label for="feedback">Feedback column:</label>
-      <select name="feedback_col" required>
-        {% for h in headers %}
-        <option value="{{ h }}" {% if defaults.feedback==h %}selected{% endif %}>{{ h }}</option>
-        {% endfor %}
-      </select>
-      <br>
-      <label for="label">Label column (optional, values 'positive'/'negative'):</label>
-      <select name="label_col">
-        <option value="">-- none --</option>
-        {% for h in headers %}
-        <option value="{{ h }}" {% if defaults.label==h %}selected{% endif %}>{{ h }}</option>
-        {% endfor %}
-      </select>
-      <br>
-      <label for="teacher">Teacher column (optional):</label>
-      <select name="teacher_col">
-        <option value="">-- none --</option>
-        {% for h in headers %}
-        <option value="{{ h }}" {% if defaults.teacher==h %}selected{% endif %}>{{ h }}</option>
-        {% endfor %}
-      </select>
-      <br>
-      <label for="facility">Facility column (optional):</label>
-      <select name="facility_col">
-        <option value="">-- none --</option>
-        {% for h in headers %}
-        <option value="{{ h }}" {% if defaults.facility==h %}selected{% endif %}>{{ h }}</option>
-        {% endfor %}
-      </select>
-      <br>
-      <label for="branch">Branch (optional):</label>
-      <select name="branch_col">
-        <option value="">-- none --</option>
-        {% for h in headers %}
-        <option value="{{ h }}" {% if defaults.branch==h %}selected{% endif %}>{{ h }}</option>
-        {% endfor %}
-      </select>
-      <br>
-      <label for="department">Department (optional):</label>
-      <select name="department_col">
-        <option value="">-- none --</option>
-        {% for h in headers %}
-        <option value="{{ h }}" {% if defaults.department==h %}selected{% endif %}>{{ h }}</option>
-        {% endfor %}
-      </select>
-      <br>
-      <label for="use_model">Use existing model (optional):</label>
-      <select name="use_model">
-        <option value="">-- train new model --</option>
-        {% if existing_models %}
-          {% for m in existing_models %}
-            <option value="{{ m }}">{{ m }}</option>
-          {% endfor %}
-        {% endif %}
-      </select>
-      <br>
-      <button type="submit">Process</button>
-    </form>
+    <div class="panel">
+      <header>
+        <span>Column mapping</span>
+        <h1>Confirm the detected survey headings</h1>
+        <p class="lead">Review and tweak the automatic mapping so the analysis uses the correct dimensions.</p>
+      </header>
+
+      <form method="post" action="/process">
+        <input type="hidden" name="filename" value="{{ filename }}">
+
+        <div class="field">
+          <label for="feedback_col">Feedback column</label>
+          <select name="feedback_col" id="feedback_col" required>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if defaults.feedback==h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="label_col">Label column <span class="optional">(positive/negative)</span></label>
+          <select name="label_col" id="label_col">
+            <option value="">-- none --</option>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if defaults.label==h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="teacher_col">Teacher column <span class="optional">(optional)</span></label>
+          <select name="teacher_col" id="teacher_col">
+            <option value="">-- none --</option>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if defaults.teacher==h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="facility_col">Facility column <span class="optional">(optional)</span></label>
+          <select name="facility_col" id="facility_col">
+            <option value="">-- none --</option>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if defaults.facility==h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="branch_col">Branch column <span class="optional">(optional)</span></label>
+          <select name="branch_col" id="branch_col">
+            <option value="">-- none --</option>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if defaults.branch==h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="department_col">Department column <span class="optional">(optional)</span></label>
+          <select name="department_col" id="department_col">
+            <option value="">-- none --</option>
+            {% for h in headers %}
+            <option value="{{ h }}" {% if defaults.department==h %}selected{% endif %}>{{ h }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="use_model">Reuse trained model</label>
+          <select name="use_model" id="use_model">
+            <option value="">-- train new model --</option>
+            {% if existing_models %}
+              {% for m in existing_models %}
+                <option value="{{ m }}">{{ m }}</option>
+              {% endfor %}
+            {% endif %}
+          </select>
+        </div>
+
+        <button type="submit">Process feedback</button>
+      </form>
+
+      <p class="note">Tip: If the automatic mapping looks correct you can continue right away. You can rerun the analysis with different mappings at any time.</p>
+
+      <a class="return-link" href="/">⬑ Back to upload</a>
+    </div>
   </body>
 </html>

@@ -6,16 +6,19 @@ This file provides:
 
 The quantum functions intentionally require lambeq/pennylane and will raise an informative ImportError if not available.
 """
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+
 import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 
 
 def train_classical_baseline(X, y, test_size=0.2, random_state=42):
     X = X
     y = np.array(y)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, random_state=random_state
+    )
     clf = LogisticRegression(max_iter=1000)
     clf.fit(X_train, y_train)
     preds = clf.predict(X_test)
@@ -63,7 +66,7 @@ def train_quantum_model(*args, **kwargs):
     #     return qml.expval(...)
     #
     # Then build a training loop that maps sentences -> circuit inputs -> train.
-    
+
     raise NotImplementedError(
         "Quantum training pipeline is intentionally left as a project extension. "
         "Install lambeq/pennylane and follow lambeq examples to implement the pipeline."

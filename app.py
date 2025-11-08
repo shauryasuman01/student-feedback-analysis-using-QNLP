@@ -160,6 +160,50 @@ def plot_grouped_pos_neg(pos_series, title, filename_html):
     return out_path
 
 
+def plot_grouped_pos_neg_html(pos_series, title):
+    """Return grouped Positive/Negative chart as inline Plotly HTML."""
+    import pandas as _pd
+
+    df = _pd.DataFrame({'label': list(pos_series.index), 'Positive': list(pos_series.values)})
+    df['Negative'] = 1.0 - df['Positive']
+    long = df.melt(id_vars='label', value_vars=['Positive', 'Negative'], var_name='sentiment', value_name='value')
+    long['pct'] = long['value'] * 100.0
+    fig = px.bar(
+        long,
+        x='label',
+        y='pct',
+        color='sentiment',
+        barmode='group',
+        title=title,
+        labels={'pct': 'Percent (%)', 'label': ''},
+        color_discrete_map={'Positive': '#2ca02c', 'Negative': '#d62728'},
+    )
+    fig.update_layout(xaxis={'categoryorder': 'total descending'}, yaxis=dict(range=[0, 100]))
+    return pio.to_html(fig, include_plotlyjs='cdn', full_html=False)
+
+
+def plot_overall_pos_neg_html(positive_count, negative_count, title):
+    total = float(positive_count + negative_count) if (positive_count + negative_count) > 0 else 1.0
+    pos_pct = (positive_count / total) * 100.0
+    neg_pct = (negative_count / total) * 100.0
+    labels = ['Positive', 'Negative']
+    values = [pos_pct, neg_pct]
+    import pandas as _pd
+
+    df = _pd.DataFrame({'sentiment': labels, 'pct': values})
+    fig = px.bar(
+        df,
+        x='sentiment',
+        y='pct',
+        title=title,
+        labels={'pct': 'Percent (%)', 'sentiment': ''},
+        color='sentiment',
+        color_discrete_map={'Positive': '#2ca02c', 'Negative': '#d62728'},
+    )
+    fig.update_layout(yaxis=dict(range=[0, 100]))
+    return pio.to_html(fig, include_plotlyjs='cdn', full_html=False)
+
+
 @app.route('/')
 def index():
     return render_template('upload.html')
@@ -271,76 +315,129 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
         df['predicted'] = df['clean_feedback'].map(rule_based_sentiment)
 
     agg_results = {}
+    total = len(df)
+    positive = int(df['predicted'].sum())
+    negative = total - positive
+
     if teacher_col and teacher_col in df.columns:
-        teacher_group = df.groupby(teacher_col)['predicted'].mean().sort_values(ascending=False)
-        tfile = f"teacher_{uuid.uuid4().hex}.html"
-        tpath = plot_grouped_pos_neg(teacher_group, 'Teacher positive vs negative (%)', tfile)
-        agg_results['teacher_plot'] = tfile
-        agg_results['teacher_stats'] = teacher_group.to_dict()
-        # also create an overall teacher positive vs negative (two columns)
         teacher_mask = df[teacher_col].notna()
-        t_positive = int(df.loc[teacher_mask, 'predicted'].sum())
-        t_total = int(teacher_mask.sum())
-        t_negative = t_total - t_positive
-        tover_file = f"teacher_overall_{uuid.uuid4().hex}.html"
-        tover_path = plot_overall_pos_neg(t_positive, t_negative, 'Teacher overall Positive vs Negative', tover_file)
-        agg_results['teacher_overall_plot'] = tover_file
+        teacher_group = (
+            df.loc[teacher_mask]
+            .groupby(teacher_col)['predicted']
+            .mean()
+            .sort_values(ascending=False)
+        )
+        if not teacher_group.empty:
+            agg_results['teacher_plot_html'] = plot_grouped_pos_neg_html(
+                teacher_group,
+                'Positive vs Negative Feedback by Teacher',
+            )
+            agg_results['teacher_stats'] = teacher_group.to_dict()
+        teacher_pos = int(df.loc[teacher_mask, 'predicted'].sum())
+        teacher_total = int(teacher_mask.sum())
+        if teacher_total > 0:
+            agg_results['teacher_overall_html'] = plot_overall_pos_neg_html(
+                teacher_pos,
+                teacher_total - teacher_pos,
+                'Teacher Overall Positive vs Negative',
+            )
+
     if facility_col and facility_col in df.columns:
-        facility_group = df.groupby(facility_col)['predicted'].mean().sort_values(ascending=False)
-        ffile = f"facility_{uuid.uuid4().hex}.html"
-        fpath = plot_grouped_pos_neg(facility_group, 'Facility positive vs negative (%)', ffile)
-        agg_results['facility_plot'] = ffile
-        agg_results['facility_stats'] = facility_group.to_dict()
-        # overall facility positive vs negative
-        fac_mask = df[facility_col].notna()
-        f_positive = int(df.loc[fac_mask, 'predicted'].sum())
-        f_total = int(fac_mask.sum())
-        f_negative = f_total - f_positive
-        fover_file = f"facility_overall_{uuid.uuid4().hex}.html"
-        fover_path = plot_overall_pos_neg(f_positive, f_negative, 'Facility overall Positive vs Negative', fover_file)
-        agg_results['facility_overall_plot'] = fover_file
+        facility_mask = df[facility_col].notna()
+        facility_group = (
+            df.loc[facility_mask]
+            .groupby(facility_col)['predicted']
+            .mean()
+            .sort_values(ascending=False)
+        )
+        if not facility_group.empty:
+            agg_results['facility_plot_html'] = plot_grouped_pos_neg_html(
+                facility_group,
+                'Positive vs Negative Feedback by Facility',
+            )
+            agg_results['facility_stats'] = facility_group.to_dict()
+        facility_pos = int(df.loc[facility_mask, 'predicted'].sum())
+        facility_total = int(facility_mask.sum())
+        if facility_total > 0:
+            agg_results['facility_overall_html'] = plot_overall_pos_neg_html(
+                facility_pos,
+                facility_total - facility_pos,
+                'Facility Overall Positive vs Negative',
+            )
 
     category_columns = [
-        'Teacher Feedback', 'Course Content', 'Examination pattern',
-        'Laboratory Library Facilities', 'Extra Co-Curricular Activities', 'Any other suggestion'
+        'Teacher Feedback',
+        'Course Content',
+        'Examination pattern',
+        'Laboratory Library Facilities',
+        'Extra Co-Curricular Activities',
+        'Any other suggestion',
     ]
     present_categories = [c for c in category_columns if c in df.columns]
     if present_categories:
+        import pandas as _pd
+
         category_scores = {}
         for c in present_categories:
             texts = df[c].astype(str).fillna('')
             preds = texts.map(rule_based_sentiment)
-            category_scores[c] = float(preds.mean()) if len(preds) > 0 else 0.0
-    import pandas as _pd
-    cat_series = _pd.Series(category_scores).sort_values(ascending=False)
-    cfile = f"categories_{uuid.uuid4().hex}.html"
-    # show categories as grouped positive/negative percentages
-    cpath = plot_grouped_pos_neg(cat_series, 'Category positive vs negative (%)', cfile)
-    agg_results['category_plot'] = cfile
-    agg_results['category_stats'] = category_scores
+            if len(preds) == 0:
+                continue
+            category_scores[c] = float(preds.mean())
+        if category_scores:
+            cat_series = _pd.Series(category_scores).sort_values(ascending=False)
+            agg_results['category_plot_html'] = plot_grouped_pos_neg_html(
+                cat_series,
+                'Positive vs Negative Feedback by Category',
+            )
+            agg_results['category_stats'] = category_scores
 
     if branch_col and branch_col in df.columns:
-        branch_group = df.groupby(branch_col)['predicted'].mean().sort_values(ascending=False)
-        bfile = f"branch_{uuid.uuid4().hex}.html"
-        bpath = plot_grouped_pos_neg(branch_group, 'Branch positive vs negative (%)', bfile)
-        agg_results['branch_plot'] = bfile
-        agg_results['branch_stats'] = branch_group.to_dict()
+        branch_mask = df[branch_col].notna()
+        branch_group = (
+            df.loc[branch_mask]
+            .groupby(branch_col)['predicted']
+            .mean()
+            .sort_values(ascending=False)
+        )
+        if not branch_group.empty:
+            agg_results['branch_plot_html'] = plot_grouped_pos_neg_html(
+                branch_group,
+                'Positive vs Negative Feedback by Branch',
+            )
+            agg_results['branch_stats'] = branch_group.to_dict()
+
     if department_col and department_col in df.columns:
-        dept_group = df.groupby(department_col)['predicted'].mean().sort_values(ascending=False)
-        dfile = f"department_{uuid.uuid4().hex}.html"
-        dpath = plot_grouped_pos_neg(dept_group, 'Department positive vs negative (%)', dfile)
-        agg_results['department_plot'] = dfile
-        agg_results['department_stats'] = dept_group.to_dict()
+        dept_mask = df[department_col].notna()
+        dept_group = (
+            df.loc[dept_mask]
+            .groupby(department_col)['predicted']
+            .mean()
+            .sort_values(ascending=False)
+        )
+        if not dept_group.empty:
+            agg_results['department_plot_html'] = plot_grouped_pos_neg_html(
+                dept_group,
+                'Positive vs Negative Feedback by Department',
+            )
+            agg_results['department_stats'] = dept_group.to_dict()
 
-    total = len(df)
-    positive = int(df['predicted'].sum())
-    negative = total - positive
-    # overall
-    ofile = f"overall_{uuid.uuid4().hex}.html"
-    opath = plot_overall_pos_neg(positive, negative, 'Overall Positive vs Negative', ofile)
-    agg_results['overall_plot'] = ofile
+    agg_results['overall_plot_html'] = plot_overall_pos_neg_html(
+        positive,
+        negative,
+        'Overall Positive vs Negative Feedback Distribution',
+    )
 
-    return render_template('results.html', accuracy=accuracy, total=total, positive=positive, negative=negative, agg=agg_results, metrics=metrics, saved_model_path=saved_model)
+    return render_template(
+        'results.html',
+        accuracy=accuracy,
+        total=total,
+        positive=positive,
+        negative=negative,
+        agg=agg_results,
+        metrics=metrics,
+        saved_model_path=saved_model,
+    )
 
 
 if __name__ == '__main__':
