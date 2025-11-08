@@ -4,8 +4,7 @@ import uuid
 
 import matplotlib
 import pandas as pd
-from flask import (Flask, redirect, render_template, request,
-                   send_from_directory, url_for)
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 from werkzeug.utils import secure_filename
 
 matplotlib.use('Agg')
@@ -28,8 +27,101 @@ os.makedirs(GENERATED_FOLDER, exist_ok=True)
 os.makedirs('models', exist_ok=True)
 
 # small sentiment lexicon
-POSITIVE_WORDS = {'good','great','helpful','clear','excellent','enjoyed','learned','useful','patient'}
-NEGATIVE_WORDS = {'bad','terrible','boring','unclear','overwhelmed','slow','lack','lackluster','confusing'}
+POSITIVE_WORDS = {
+    'good',
+    'great',
+    'helpful',
+    'clear',
+    'excellent',
+    'enjoyed',
+    'learned',
+    'useful',
+    'patient',
+    'friendly',
+    'supportive',
+    'interesting',
+    'engaging',
+    'improved',
+}
+NEGATIVE_WORDS = {
+    'bad',
+    'terrible',
+    'boring',
+    'unclear',
+    'overwhelmed',
+    'slow',
+    'lack',
+    'lackluster',
+    'confusing',
+    'poor',
+    'difficult',
+    'hard',
+    'stressful',
+    'problem',
+    'issues',
+    'issue',
+    'average',
+    'late',
+    'delay',
+    'delayed',
+    'missing',
+    'need',
+    'needs',
+    'improve',
+    'improvement',
+    'disappointing',
+    'disappointed',
+    'worst',
+    'strict',
+}
+NEGATIVE_PHRASES = {
+    'not good',
+    'not satisfied',
+    'not clear',
+    'not helpful',
+    'not enough',
+    'not adequate',
+    'no proper',
+    'could be better',
+    'needs improvement',
+    'need improvement',
+    'need to improve',
+    'needs to improve',
+    'should improve',
+    'more practical',
+    'more practicle',
+    'more practice',
+    'need more',
+    'needs more',
+    'lack of',
+    'improvement needed',
+}
+
+
+def safe_remove(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+
+
+def sentiment_word_counts(text):
+    if not isinstance(text, str):
+        return 0, 0
+    lowered = text.lower()
+    pos = sum(1 for w in POSITIVE_WORDS if w in lowered)
+    neg = sum(1 for w in NEGATIVE_WORDS if w in lowered)
+    for phrase in NEGATIVE_PHRASES:
+        if phrase in lowered:
+            neg += 1
+    for w in POSITIVE_WORDS:
+        if any(f"{negator} {w}" in lowered for negator in ('not', 'no', 'never')):
+            if pos > 0:
+                pos -= 1
+            neg += 1
+    return pos, neg
 
 
 def allowed_file(filename):
@@ -72,12 +164,8 @@ def detect_columns(headers):
 
 
 def rule_based_sentiment(text):
-    if not isinstance(text, str):
-        return 0
-    text = text.lower()
-    pos = sum(1 for w in POSITIVE_WORDS if w in text)
-    neg = sum(1 for w in NEGATIVE_WORDS if w in text)
-    if pos >= neg and (pos+neg) > 0:
+    pos, neg = sentiment_word_counts(text)
+    if pos >= neg and (pos + neg) > 0:
         return 1
     if pos == 0 and neg == 0:
         # neutral -> treat as negative for conservative approach
@@ -160,8 +248,29 @@ def plot_grouped_pos_neg(pos_series, title, filename_html):
     return out_path
 
 
-def plot_grouped_pos_neg_html(pos_series, title):
-    """Return grouped Positive/Negative chart as inline Plotly HTML."""
+def build_plot_payload(fig):
+    """Return both inline HTML and serializable Plotly dict for a figure."""
+    return {
+        'html': pio.to_html(fig, include_plotlyjs='cdn', full_html=False),
+        'figure': fig.to_dict(),
+    }
+
+
+def _cors_json(payload, status=200):
+    """Create a JSON or empty response with permissive CORS headers."""
+    if status == 204:
+        response = app.response_class(status=204)
+    else:
+        response = jsonify(payload)
+        response.status_code = status
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+    return response
+
+
+def plot_grouped_pos_neg_payload(pos_series, title):
+    """Return grouped Positive/Negative chart payload."""
     import pandas as _pd
 
     df = _pd.DataFrame({'label': list(pos_series.index), 'Positive': list(pos_series.values)})
@@ -179,10 +288,10 @@ def plot_grouped_pos_neg_html(pos_series, title):
         color_discrete_map={'Positive': '#2ca02c', 'Negative': '#d62728'},
     )
     fig.update_layout(xaxis={'categoryorder': 'total descending'}, yaxis=dict(range=[0, 100]))
-    return pio.to_html(fig, include_plotlyjs='cdn', full_html=False)
+    return build_plot_payload(fig)
 
 
-def plot_overall_pos_neg_html(positive_count, negative_count, title):
+def plot_overall_pos_neg_payload(positive_count, negative_count, title):
     total = float(positive_count + negative_count) if (positive_count + negative_count) > 0 else 1.0
     pos_pct = (positive_count / total) * 100.0
     neg_pct = (negative_count / total) * 100.0
@@ -201,7 +310,7 @@ def plot_overall_pos_neg_html(positive_count, negative_count, title):
         color_discrete_map={'Positive': '#2ca02c', 'Negative': '#d62728'},
     )
     fig.update_layout(yaxis=dict(range=[0, 100]))
-    return pio.to_html(fig, include_plotlyjs='cdn', full_html=False)
+    return build_plot_payload(fig)
 
 
 @app.route('/')
@@ -225,19 +334,36 @@ def upload_file():
         try:
             df_sample = pd.read_csv(saved_path, nrows=5)
         except Exception as e:
+            safe_remove(saved_path)
             return f"Error reading CSV: {e}", 400
     headers = list(df_sample.columns)
     defaults = detect_columns(headers)
     # auto-process using detected defaults (skip manual mapping)
-    df_full = pd.read_csv(saved_path)
+    try:
+        df_full = pd.read_csv(saved_path)
+    except Exception as e:
+        safe_remove(saved_path)
+        return f"Error reading CSV: {e}", 400
     feedback_col = defaults.get('feedback')
     label_col = defaults.get('label')
     teacher_col = defaults.get('teacher')
     facility_col = defaults.get('facility')
     branch_col = defaults.get('branch')
     department_col = defaults.get('department')
-    # call processing helper
-    return process_dataframe(df_full, feedback_col=feedback_col, label_col=label_col, teacher_col=teacher_col, facility_col=facility_col, branch_col=branch_col, department_col=department_col, saved_model_path=None)
+    try:
+        response = process_dataframe(
+            df_full,
+            feedback_col=feedback_col,
+            label_col=label_col,
+            teacher_col=teacher_col,
+            facility_col=facility_col,
+            branch_col=branch_col,
+            department_col=department_col,
+            saved_model_path=None,
+        )
+    finally:
+        safe_remove(saved_path)
+    return response
 
 
 @app.route('/process', methods=['POST'])
@@ -256,25 +382,47 @@ def process_file():
     path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     if not os.path.exists(path):
         return 'File not found', 404
-    df = pd.read_csv(path)
-    return process_dataframe(df, feedback_col=feedback_col, label_col=label_col, teacher_col=teacher_col, facility_col=facility_col, branch_col=branch_col, department_col=department_col, use_model=use_model)
+    try:
+        df = pd.read_csv(path)
+    except Exception as e:
+        safe_remove(path)
+        return f"Error reading CSV: {e}", 400
+    try:
+        response = process_dataframe(
+            df,
+            feedback_col=feedback_col,
+            label_col=label_col,
+            teacher_col=teacher_col,
+            facility_col=facility_col,
+            branch_col=branch_col,
+            department_col=department_col,
+            use_model=use_model,
+        )
+    finally:
+        safe_remove(path)
+    return response
 
 
-def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, facility_col=None, branch_col=None, department_col=None, use_model=None, saved_model_path=None):
-    """Process a dataframe and return rendered results template. Extracted from process_file."""
+def generate_analysis(df, feedback_col=None, label_col=None, teacher_col=None, facility_col=None, branch_col=None, department_col=None, use_model=None, saved_model_path=None):
+    """Produce analysis artifacts for a feedback dataframe."""
+
+    df = df.copy()
     if feedback_col not in df.columns:
-        # fallback: try detect
         detected = detect_columns(list(df.columns))
         feedback_col = detected.get('feedback')
         if feedback_col not in df.columns:
-            return f'Feedback column {feedback_col} missing', 400
+            raise ValueError(f'Feedback column {feedback_col} missing')
+
     df['clean_feedback'] = df[feedback_col].astype(str)
 
     accuracy = None
     metrics = None
-    saved_model = None
+    saved_model = saved_model_path
+    model_used = 'rule_based'
+
     if use_model:
         import joblib
+
         model_path = os.path.join('models', use_model)
         if os.path.exists(model_path):
             loaded = joblib.load(model_path)
@@ -284,6 +432,7 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
                 X = vec.transform(df['clean_feedback'])
                 preds = clf.predict(X)
                 df['predicted'] = preds
+                model_used = 'pretrained'
             else:
                 df['predicted'] = df['clean_feedback'].map(rule_based_sentiment)
         else:
@@ -291,33 +440,54 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
     elif label_col and label_col in df.columns:
         from sklearn.feature_extraction.text import CountVectorizer
         from sklearn.linear_model import LogisticRegression
-        from sklearn.metrics import (accuracy_score, confusion_matrix,
-                                     precision_recall_fscore_support)
+        from sklearn.metrics import (
+            accuracy_score,
+            confusion_matrix,
+            precision_recall_fscore_support,
+        )
         from sklearn.model_selection import train_test_split
 
         vec = CountVectorizer(max_features=2000)
         X_all = vec.fit_transform(df['clean_feedback'])
-        y_all = (df[label_col].astype(str) == 'positive').astype(int)
-        X_train, X_val, y_train, y_val = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
+        y_all = (df[label_col].astype(str).str.lower() == 'positive').astype(int)
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_all, y_all, test_size=0.2, random_state=42
+        )
         clf = LogisticRegression(max_iter=1000)
         clf.fit(X_train, y_train)
         preds = clf.predict(X_val)
         acc = accuracy_score(y_val, preds)
-        p, r, f, _ = precision_recall_fscore_support(y_val, preds, average='binary', zero_division=0)
+        p, r, f, _ = precision_recall_fscore_support(
+            y_val, preds, average='binary', zero_division=0
+        )
         cm = confusion_matrix(y_val, preds).tolist()
-        metrics = {'accuracy': float(acc), 'precision': float(p), 'recall': float(r), 'f1': float(f), 'confusion_matrix': cm}
+        metrics = {
+            'accuracy': float(acc),
+            'precision': float(p),
+            'recall': float(r),
+            'f1': float(f),
+            'confusion_matrix': cm,
+        }
+        accuracy = float(acc)
         df['predicted'] = clf.predict(X_all)
         from feedback_qnlp.utils import ensure_models_dir, save_model
+
         models_dir = ensure_models_dir(os.path.join(os.getcwd()))
         model_blob = {'model': clf, 'vectorizer': vec}
         saved_model = save_model(model_blob, models_dir)
+        model_used = 'trained'
     else:
         df['predicted'] = df['clean_feedback'].map(rule_based_sentiment)
 
-    agg_results = {}
-    total = len(df)
+    total = int(len(df))
     positive = int(df['predicted'].sum())
-    negative = total - positive
+    negative = int(total - positive)
+    pos_pct = (positive / total * 100.0) if total else 0.0
+    neg_pct = (negative / total * 100.0) if total else 0.0
+
+    chart_html = {}
+    charts = {}
+    stats = {}
 
     if teacher_col and teacher_col in df.columns:
         teacher_mask = df[teacher_col].notna()
@@ -328,19 +498,23 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
             .sort_values(ascending=False)
         )
         if not teacher_group.empty:
-            agg_results['teacher_plot_html'] = plot_grouped_pos_neg_html(
+            payload = plot_grouped_pos_neg_payload(
                 teacher_group,
                 'Positive vs Negative Feedback by Teacher',
             )
-            agg_results['teacher_stats'] = teacher_group.to_dict()
+            chart_html['teacher_plot_html'] = payload['html']
+            charts['teacher_sentiment'] = payload['figure']
+            stats['teacher'] = {k: float(v) for k, v in teacher_group.items()}
         teacher_pos = int(df.loc[teacher_mask, 'predicted'].sum())
         teacher_total = int(teacher_mask.sum())
         if teacher_total > 0:
-            agg_results['teacher_overall_html'] = plot_overall_pos_neg_html(
+            payload = plot_overall_pos_neg_payload(
                 teacher_pos,
                 teacher_total - teacher_pos,
                 'Teacher Overall Positive vs Negative',
             )
+            chart_html['teacher_overall_html'] = payload['html']
+            charts['teacher_overall'] = payload['figure']
 
     if facility_col and facility_col in df.columns:
         facility_mask = df[facility_col].notna()
@@ -351,19 +525,23 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
             .sort_values(ascending=False)
         )
         if not facility_group.empty:
-            agg_results['facility_plot_html'] = plot_grouped_pos_neg_html(
+            payload = plot_grouped_pos_neg_payload(
                 facility_group,
                 'Positive vs Negative Feedback by Facility',
             )
-            agg_results['facility_stats'] = facility_group.to_dict()
+            chart_html['facility_plot_html'] = payload['html']
+            charts['facility_sentiment'] = payload['figure']
+            stats['facility'] = {k: float(v) for k, v in facility_group.items()}
         facility_pos = int(df.loc[facility_mask, 'predicted'].sum())
         facility_total = int(facility_mask.sum())
         if facility_total > 0:
-            agg_results['facility_overall_html'] = plot_overall_pos_neg_html(
+            payload = plot_overall_pos_neg_payload(
                 facility_pos,
                 facility_total - facility_pos,
                 'Facility Overall Positive vs Negative',
             )
+            chart_html['facility_overall_html'] = payload['html']
+            charts['facility_overall'] = payload['figure']
 
     category_columns = [
         'Teacher Feedback',
@@ -379,18 +557,38 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
 
         category_scores = {}
         for c in present_categories:
-            texts = df[c].astype(str).fillna('')
-            preds = texts.map(rule_based_sentiment)
-            if len(preds) == 0:
+            texts = (
+                df[c]
+                .dropna()
+                .astype(str)
+                .str.strip()
+            )
+            texts = texts[texts != '']
+            if texts.empty:
                 continue
-            category_scores[c] = float(preds.mean())
+            positive_votes = 0
+            negative_votes = 0
+            for text in texts:
+                pos_count, neg_count = sentiment_word_counts(text)
+                if pos_count == 0 and neg_count == 0:
+                    continue
+                if pos_count >= neg_count:
+                    positive_votes += 1
+                else:
+                    negative_votes += 1
+            total_votes = positive_votes + negative_votes
+            if total_votes == 0:
+                continue
+            category_scores[c] = positive_votes / total_votes
         if category_scores:
             cat_series = _pd.Series(category_scores).sort_values(ascending=False)
-            agg_results['category_plot_html'] = plot_grouped_pos_neg_html(
+            payload = plot_grouped_pos_neg_payload(
                 cat_series,
                 'Positive vs Negative Feedback by Category',
             )
-            agg_results['category_stats'] = category_scores
+            chart_html['category_plot_html'] = payload['html']
+            charts['category_sentiment'] = payload['figure']
+            stats['categories'] = {k: float(v) for k, v in cat_series.items()}
 
     if branch_col and branch_col in df.columns:
         branch_mask = df[branch_col].notna()
@@ -401,11 +599,13 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
             .sort_values(ascending=False)
         )
         if not branch_group.empty:
-            agg_results['branch_plot_html'] = plot_grouped_pos_neg_html(
+            payload = plot_grouped_pos_neg_payload(
                 branch_group,
                 'Positive vs Negative Feedback by Branch',
             )
-            agg_results['branch_stats'] = branch_group.to_dict()
+            chart_html['branch_plot_html'] = payload['html']
+            charts['branch_sentiment'] = payload['figure']
+            stats['branch'] = {k: float(v) for k, v in branch_group.items()}
 
     if department_col and department_col in df.columns:
         dept_mask = df[department_col].notna()
@@ -416,28 +616,136 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
             .sort_values(ascending=False)
         )
         if not dept_group.empty:
-            agg_results['department_plot_html'] = plot_grouped_pos_neg_html(
+            payload = plot_grouped_pos_neg_payload(
                 dept_group,
                 'Positive vs Negative Feedback by Department',
             )
-            agg_results['department_stats'] = dept_group.to_dict()
+            chart_html['department_plot_html'] = payload['html']
+            charts['department_sentiment'] = payload['figure']
+            stats['department'] = {k: float(v) for k, v in dept_group.items()}
 
-    agg_results['overall_plot_html'] = plot_overall_pos_neg_html(
+    overall_payload = plot_overall_pos_neg_payload(
         positive,
         negative,
         'Overall Positive vs Negative Feedback Distribution',
     )
+    chart_html['overall_plot_html'] = overall_payload['html']
+    charts['overall_sentiment'] = overall_payload['figure']
 
+    columns_used = {
+        'feedback': feedback_col,
+        'label': label_col if label_col in df.columns else None,
+        'teacher': teacher_col if teacher_col in df.columns else None,
+        'facility': facility_col if facility_col in df.columns else None,
+        'branch': branch_col if branch_col in df.columns else None,
+        'department': department_col if department_col in df.columns else None,
+    }
+
+    model_info = {
+        'strategy': model_used,
+        'used_existing_model': bool(use_model),
+        'saved_model_path': saved_model,
+        'saved_model_name': os.path.basename(saved_model) if saved_model else None,
+    }
+
+    analysis = {
+        'summary': {
+            'total': total,
+            'positive': positive,
+            'negative': negative,
+            'positive_pct': pos_pct,
+            'negative_pct': neg_pct,
+        },
+        'metrics': metrics,
+        'accuracy': accuracy,
+        'charts': charts,
+        'chart_html': chart_html,
+        'stats': stats,
+        'columns_used': columns_used,
+        'model': model_info,
+        'saved_model_path': saved_model,
+    }
+
+    return analysis
+
+
+def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, facility_col=None, branch_col=None, department_col=None, use_model=None, saved_model_path=None):
+    """Process a dataframe and return rendered HTML results."""
+
+    try:
+        analysis = generate_analysis(
+            df,
+            feedback_col=feedback_col,
+            label_col=label_col,
+            teacher_col=teacher_col,
+            facility_col=facility_col,
+            branch_col=branch_col,
+            department_col=department_col,
+            use_model=use_model,
+            saved_model_path=saved_model_path,
+        )
+    except ValueError as exc:
+        return str(exc), 400
+
+    summary = analysis['summary']
     return render_template(
         'results.html',
-        accuracy=accuracy,
-        total=total,
-        positive=positive,
-        negative=negative,
-        agg=agg_results,
-        metrics=metrics,
-        saved_model_path=saved_model,
+        accuracy=analysis['accuracy'],
+        total=summary['total'],
+        positive=summary['positive'],
+        negative=summary['negative'],
+        agg=analysis['chart_html'],
+        metrics=analysis['metrics'],
+        saved_model_path=analysis['saved_model_path'],
     )
+
+
+@app.route('/api/analyze', methods=['POST', 'OPTIONS'])
+def api_analyze():
+    """API endpoint that accepts a CSV upload and returns analysis JSON."""
+
+    if request.method == 'OPTIONS':
+        return _cors_json({}, status=204)
+
+    uploaded_file = request.files.get('file')
+    if uploaded_file is None or uploaded_file.filename == '':
+        return _cors_json({'error': 'No file provided'}, status=400)
+    if not allowed_file(uploaded_file.filename):
+        return _cors_json({'error': 'Unsupported file type'}, status=400)
+
+    try:
+        df = pd.read_csv(uploaded_file)
+    except Exception as exc:
+        return _cors_json({'error': f'Error reading CSV: {exc}'}, status=400)
+
+    detected = detect_columns(list(df.columns))
+
+    # Allow overrides from form fields while falling back to detected columns.
+    feedback_col = request.form.get('feedback_col') or detected.get('feedback')
+    label_col = request.form.get('label_col') or detected.get('label')
+    teacher_col = request.form.get('teacher_col') or detected.get('teacher')
+    facility_col = request.form.get('facility_col') or detected.get('facility')
+    branch_col = request.form.get('branch_col') or detected.get('branch')
+    department_col = request.form.get('department_col') or detected.get('department')
+    use_model = request.form.get('use_model') or None
+
+    try:
+        analysis = generate_analysis(
+            df,
+            feedback_col=feedback_col,
+            label_col=label_col,
+            teacher_col=teacher_col,
+            facility_col=facility_col,
+            branch_col=branch_col,
+            department_col=department_col,
+            use_model=use_model,
+        )
+    except ValueError as exc:
+        return _cors_json({'error': str(exc)}, status=400)
+
+    api_payload = {k: v for k, v in analysis.items() if k != 'chart_html'}
+    api_payload['detected_columns'] = detected
+    return _cors_json(api_payload)
 
 
 if __name__ == '__main__':
