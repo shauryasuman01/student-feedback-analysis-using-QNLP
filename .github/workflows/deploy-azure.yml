@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: feedback-qnlp-api
+  AZURE_WEBAPP_NAME: feedback-qnlp-api-ema5d5eefqg3fqab
   PYTHON_VERSION: '3.11'
 
 jobs:
