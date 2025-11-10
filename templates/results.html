@@ -274,6 +274,19 @@
         <div class="chart-card">
           <h2>Category scores</h2>
           <div class="chart-frame">{{ agg.category_plot_html | safe }}</div>
+          {% if agg.category_stats %}
+          <div class="metric-grid" style="margin-top:1.2rem;">
+            {% for name, stats in agg.category_stats.items() %}
+            <div class="metric">
+              <small>{{ name }}</small>
+              {{ '%.1f'|format(stats.positive_ratio * 100) }}%
+              <div style="font-size:0.75rem;color:#475569;margin-top:0.3rem;">
+                +{{ stats.positive }} / -{{ stats.negative }} ({{ stats.total }} responses)
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
         </div>
         {% endif %}
 

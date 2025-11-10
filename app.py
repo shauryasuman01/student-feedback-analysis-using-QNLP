@@ -19,6 +19,12 @@ UPLOAD_FOLDER = 'uploads'
 GENERATED_FOLDER = 'static/generated'
 ALLOWED_EXTENSIONS = {'csv'}
 
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # type: ignore
+    VADER_ANALYZER = SentimentIntensityAnalyzer()
+except ImportError:  # pragma: no cover - optional dependency
+    VADER_ANALYZER = None
+
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['GENERATED_FOLDER'] = GENERATED_FOLDER
@@ -30,6 +36,53 @@ os.makedirs('models', exist_ok=True)
 # small sentiment lexicon
 POSITIVE_WORDS = {'good','great','helpful','clear','excellent','enjoyed','learned','useful','patient'}
 NEGATIVE_WORDS = {'bad','terrible','boring','unclear','overwhelmed','slow','lack','lackluster','confusing'}
+IMPROVEMENT_WORDS = {
+    'need',
+    'needs',
+    'should',
+    'must',
+    'improve',
+    'improvement',
+    'lack',
+    'lacking',
+    'missing',
+    'fix',
+    'repair',
+    'resolve',
+    'issue',
+    'issues',
+    'problem',
+    'problems',
+    'difficult',
+    'difficulty',
+    'confusing',
+    'unclear',
+    'reduce',
+    'reduced',
+    'reduction',
+    'heavy',
+    'overload',
+    'overloaded',
+    'late',
+    'delay',
+    'delayed',
+    'upgrade',
+    'update',
+    'improving',
+    'improved',
+    'provide',
+    'providing',
+    'ensure',
+    'increase',
+    'more',
+    'less',
+    'shortage',
+    'scarce',
+    'scarcity',
+    'complaint',
+    'concern',
+    'concerns',
+}
 
 
 def allowed_file(filename):
@@ -71,18 +124,41 @@ def detect_columns(headers):
     return mapping
 
 
-def rule_based_sentiment(text):
+def classify_sentiment(text):
+    """Return 1 for positive, 0 for negative, and None for neutral/ties."""
     if not isinstance(text, str):
+        return None
+    text = text.strip()
+    if text == '':
+        return None
+    if VADER_ANALYZER is not None:
+        score = VADER_ANALYZER.polarity_scores(text)['compound']
+        if score >= 0.1:
+            return 1
+        if score <= -0.1:
+            return 0
+    lowered = text.lower()
+    tokens = set(re.findall(r"[a-zA-Z']+", lowered))
+    if any(word in tokens for word in IMPROVEMENT_WORDS):
+        # treat requests for change as negative unless a strong positive was already returned
         return 0
-    text = text.lower()
-    pos = sum(1 for w in POSITIVE_WORDS if w in text)
-    neg = sum(1 for w in NEGATIVE_WORDS if w in text)
-    if pos >= neg and (pos+neg) > 0:
-        return 1
+    pos = sum(1 for w in POSITIVE_WORDS if w in lowered)
+    neg = sum(1 for w in NEGATIVE_WORDS if w in lowered)
     if pos == 0 and neg == 0:
-        # neutral -> treat as negative for conservative approach
+        return None
+    if pos > neg:
+        return 1
+    if neg > pos:
         return 0
-    return 0
+    # tie -> treat as neutral to avoid skewing toward negative
+    return None
+
+
+def rule_based_sentiment(text):
+    label = classify_sentiment(text)
+    if label is None:
+        return 0
+    return int(label)
 
 
 def plot_bar(series, title, filename):
@@ -221,23 +297,33 @@ def upload_file():
         unique = f"{uuid.uuid4().hex}_{filename}"
         saved_path = os.path.join(app.config['UPLOAD_FOLDER'], unique)
         file.save(saved_path)
-        # read headers
         try:
             df_sample = pd.read_csv(saved_path, nrows=5)
         except Exception as e:
+            try:
+                os.remove(saved_path)
+            except OSError:
+                pass
             return f"Error reading CSV: {e}", 400
-    headers = list(df_sample.columns)
-    defaults = detect_columns(headers)
-    # auto-process using detected defaults (skip manual mapping)
-    df_full = pd.read_csv(saved_path)
-    feedback_col = defaults.get('feedback')
-    label_col = defaults.get('label')
-    teacher_col = defaults.get('teacher')
-    facility_col = defaults.get('facility')
-    branch_col = defaults.get('branch')
-    department_col = defaults.get('department')
-    # call processing helper
-    return process_dataframe(df_full, feedback_col=feedback_col, label_col=label_col, teacher_col=teacher_col, facility_col=facility_col, branch_col=branch_col, department_col=department_col, saved_model_path=None)
+        try:
+            df_full = pd.read_csv(saved_path)
+        finally:
+            try:
+                os.remove(saved_path)
+            except OSError:
+                pass
+        headers = list(df_sample.columns)
+        defaults = detect_columns(headers)
+        # auto-process using detected defaults (skip manual mapping)
+        feedback_col = defaults.get('feedback')
+        label_col = defaults.get('label')
+        teacher_col = defaults.get('teacher')
+        facility_col = defaults.get('facility')
+        branch_col = defaults.get('branch')
+        department_col = defaults.get('department')
+        # call processing helper; file already discarded to avoid piling up uploads
+        return process_dataframe(df_full, feedback_col=feedback_col, label_col=label_col, teacher_col=teacher_col, facility_col=facility_col, branch_col=branch_col, department_col=department_col, saved_model_path=None)
+    return redirect(url_for('index'))
 
 
 @app.route('/process', methods=['POST'])
@@ -378,19 +464,42 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
         import pandas as _pd
 
         category_scores = {}
+        category_counts = {}
         for c in present_categories:
-            texts = df[c].astype(str).fillna('')
-            preds = texts.map(rule_based_sentiment)
-            if len(preds) == 0:
+            texts = df[c].dropna().astype(str)
+            texts = texts[texts.str.strip() != '']
+            if texts.empty:
                 continue
-            category_scores[c] = float(preds.mean())
+            # convert to tri-state sentiment and ignore neutral or empty results
+            sentiments = texts.map(classify_sentiment).dropna()
+            if sentiments.empty:
+                continue
+            positive_count = int((sentiments == 1).sum())
+            negative_count = int((sentiments == 0).sum())
+            total_responses = positive_count + negative_count
+            if total_responses == 0:
+                continue
+            category_scores[c] = positive_count / total_responses
+            category_counts[c] = {
+                'positive': positive_count,
+                'negative': negative_count,
+                'total': total_responses,
+            }
         if category_scores:
             cat_series = _pd.Series(category_scores).sort_values(ascending=False)
             agg_results['category_plot_html'] = plot_grouped_pos_neg_html(
                 cat_series,
                 'Positive vs Negative Feedback by Category',
             )
-            agg_results['category_stats'] = category_scores
+            agg_results['category_stats'] = {
+                name: {
+                    'positive_ratio': category_scores[name],
+                    'positive': category_counts[name]['positive'],
+                    'negative': category_counts[name]['negative'],
+                    'total': category_counts[name]['total'],
+                }
+                for name in category_scores
+            }
 
     if branch_col and branch_col in df.columns:
         branch_mask = df[branch_col].notna()
