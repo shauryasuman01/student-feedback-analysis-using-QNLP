@@ -220,6 +220,11 @@
       </header>
 
       <section class="summary-grid">
+        {% if quantum_info and quantum_info.used %}
+        <div style="margin-top:0.6rem;display:inline-flex;align-items:center;gap:0.6rem;">
+          <span style="padding:0.35rem 0.7rem;border-radius:999px;background:linear-gradient(90deg,#f0f9ff,#e6fffa);color:#065f46;font-weight:700;font-size:0.85rem;">{{ quantum_info.note }}</span>
+        </div>
+        {% endif %}
         <div class="stat-card">
           <span>Total responses</span>
           <strong>{{ total }}</strong>

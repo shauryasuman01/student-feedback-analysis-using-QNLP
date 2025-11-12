@@ -8,3 +8,19 @@ version = "0.0.0"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[project.optional-dependencies]
+qnlp = [
+	"lambeq>=0.3.0",
+	"pennylane>=0.30.0",
+	"pennylane-lightning",
+]
+dev = [
+	"pytest",
+	"flake8",
+	"ruff",
+]
+
+[tool.ruff]
+line-length = 88
+select = ["E","F","W","I"]

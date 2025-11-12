@@ -4,6 +4,7 @@ import uuid
 
 import matplotlib
 import pandas as pd
+import numpy as np
 from flask import (Flask, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
@@ -18,7 +19,6 @@ import seaborn as sns
 UPLOAD_FOLDER = 'uploads'
 GENERATED_FOLDER = 'static/generated'
 ALLOWED_EXTENSIONS = {'csv'}
-
 try:
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer  # type: ignore
     VADER_ANALYZER = SentimentIntensityAnalyzer()
@@ -155,9 +155,15 @@ def classify_sentiment(text):
 
 
 def rule_based_sentiment(text):
+    """Return 1 for positive, 0 for negative, or None for neutral/unknown.
+
+    Previously this function mapped neutral/unknown to 0 which biased
+    results toward negative. We now preserve neutrality by returning None
+    so downstream aggregations can skip neutral entries.
+    """
     label = classify_sentiment(text)
     if label is None:
-        return 0
+        return None
     return int(label)
 
 
@@ -321,8 +327,20 @@ def upload_file():
         facility_col = defaults.get('facility')
         branch_col = defaults.get('branch')
         department_col = defaults.get('department')
+        # auto-enable quantum pipeline for uploads
+        use_quantum = True
         # call processing helper; file already discarded to avoid piling up uploads
-        return process_dataframe(df_full, feedback_col=feedback_col, label_col=label_col, teacher_col=teacher_col, facility_col=facility_col, branch_col=branch_col, department_col=department_col, saved_model_path=None)
+        return process_dataframe(
+            df_full,
+            feedback_col=feedback_col,
+            label_col=label_col,
+            teacher_col=teacher_col,
+            facility_col=facility_col,
+            branch_col=branch_col,
+            department_col=department_col,
+            use_quantum=use_quantum,
+            saved_model_path=None,
+        )
     return redirect(url_for('index'))
 
 
@@ -339,14 +357,30 @@ def process_file():
     branch_col = request.form.get('branch_col') or None
     department_col = request.form.get('department_col') or None
     use_model = request.form.get('use_model') or None
+    _uq = request.form.get('use_quantum')
+    def _parse_bool(s):
+        if s is None:
+            return True
+        return str(s).lower() in ('1', 'true', 'yes', 'on')
+    use_quantum = _parse_bool(_uq)
     path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     if not os.path.exists(path):
         return 'File not found', 404
     df = pd.read_csv(path)
-    return process_dataframe(df, feedback_col=feedback_col, label_col=label_col, teacher_col=teacher_col, facility_col=facility_col, branch_col=branch_col, department_col=department_col, use_model=use_model)
+    return process_dataframe(
+        df,
+        feedback_col=feedback_col,
+        label_col=label_col,
+        teacher_col=teacher_col,
+        facility_col=facility_col,
+        branch_col=branch_col,
+        department_col=department_col,
+        use_model=use_model,
+        use_quantum=use_quantum,
+    )
 
 
-def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, facility_col=None, branch_col=None, department_col=None, use_model=None, saved_model_path=None):
+def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, facility_col=None, branch_col=None, department_col=None, use_model=None, use_quantum=False, saved_model_path=None):
     """Process a dataframe and return rendered results template. Extracted from process_file."""
     if feedback_col not in df.columns:
         # fallback: try detect
@@ -359,6 +393,38 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
     accuracy = None
     metrics = None
     saved_model = None
+    quantum_used = False
+    quantum_result = None
+    # If user requested quantum pipeline, handle it here (it requires labels).
+    if use_quantum:
+        if label_col and label_col in df.columns:
+            from feedback_qnlp.model import train_quantum_model
+            # prepare inputs
+            texts = df[feedback_col].astype(str).tolist()
+            y = (df[label_col].astype(str) == 'positive').astype(int).tolist()
+            # run the quantum or simulated pipeline
+            quantum_result = train_quantum_model(texts, y)
+            quantum_used = True
+            # populate predictions if provided
+            preds = quantum_result.get('predictions')
+            if preds is not None:
+                df['predicted'] = preds
+            # set accuracy if available
+            if 'accuracy' in quantum_result:
+                accuracy = float(quantum_result['accuracy'])
+            # save model artifact if possible
+            try:
+                from feedback_qnlp.utils import ensure_models_dir, save_model
+                models_dir = ensure_models_dir(os.path.join(os.getcwd()))
+                model_blob = {'model': quantum_result.get('model'), 'vectorizer': quantum_result.get('vectorizer')}
+                saved_model = save_model(model_blob, models_dir)
+            except Exception:
+                # non-fatal: saving quantum artifacts may not be serializable by joblib
+                saved_model = None
+        else:
+            # cannot run quantum pipeline without labels; fall back to rule-based
+            df['predicted'] = df['clean_feedback'].map(rule_based_sentiment)
+            quantum_used = False
     if use_model:
         import joblib
         model_path = os.path.join('models', use_model)
@@ -377,6 +443,7 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
     elif label_col and label_col in df.columns:
         from sklearn.feature_extraction.text import CountVectorizer
         from sklearn.linear_model import LogisticRegression
+        from sklearn.calibration import CalibratedClassifierCV
         from sklearn.metrics import (accuracy_score, confusion_matrix,
                                      precision_recall_fscore_support)
         from sklearn.model_selection import train_test_split
@@ -385,25 +452,64 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
         X_all = vec.fit_transform(df['clean_feedback'])
         y_all = (df[label_col].astype(str) == 'positive').astype(int)
         X_train, X_val, y_train, y_val = train_test_split(X_all, y_all, test_size=0.2, random_state=42)
-        clf = LogisticRegression(max_iter=1000)
+        # use balanced class weights to mitigate label imbalance
+        clf = LogisticRegression(max_iter=1000, class_weight='balanced')
         clf.fit(X_train, y_train)
-        preds = clf.predict(X_val)
-        acc = accuracy_score(y_val, preds)
-        p, r, f, _ = precision_recall_fscore_support(y_val, preds, average='binary', zero_division=0)
-        cm = confusion_matrix(y_val, preds).tolist()
+
+        # Calibrate probabilities on held-out validation set for better thresholding
+        try:
+            calib = CalibratedClassifierCV(base_estimator=clf, method='sigmoid', cv='prefit')
+            calib.fit(X_val, y_val)
+            model_for_proba = calib
+        except Exception:
+            # If calibration fails, fall back to the raw classifier
+            model_for_proba = clf
+
+        # evaluate on validation using calibrated probabilities (0.5 default for metrics)
+        try:
+            probs_val = model_for_proba.predict_proba(X_val)[:, 1]
+            preds_val = (probs_val >= 0.5).astype(int)
+        except Exception:
+            preds_val = clf.predict(X_val)
+
+        acc = accuracy_score(y_val, preds_val)
+        p, r, f, _ = precision_recall_fscore_support(y_val, preds_val, average='binary', zero_division=0)
+        cm = confusion_matrix(y_val, preds_val).tolist()
         metrics = {'accuracy': float(acc), 'precision': float(p), 'recall': float(r), 'f1': float(f), 'confusion_matrix': cm}
-        df['predicted'] = clf.predict(X_all)
+
+        # apply threshold for predicting positive vs negative (binary prediction only)
+        threshold = 0.6
+        try:
+            probs_all = model_for_proba.predict_proba(X_all)[:, 1]
+            preds_all = (probs_all >= threshold).astype(int)
+        except Exception:
+            preds_all = clf.predict(X_all)
+
+        df['predicted'] = pd.Series(preds_all, index=df.index).astype(int)
+
         from feedback_qnlp.utils import ensure_models_dir, save_model
         models_dir = ensure_models_dir(os.path.join(os.getcwd()))
-        model_blob = {'model': clf, 'vectorizer': vec}
+        model_blob = {'model': model_for_proba, 'vectorizer': vec}
         saved_model = save_model(model_blob, models_dir)
+    elif quantum_used and quantum_result is not None:
+        # quantum_result already handled predictions and accuracy above; if it used a classical
+        # fallback model we may have saved it. Attempt to expose metrics if present.
+        if isinstance(quantum_result, dict):
+            if quantum_result.get('quantum') is False and 'model' in quantum_result:
+                # classical fallback; metrics already available in 'accuracy'
+                accuracy = float(quantum_result.get('accuracy', accuracy or 0.0))
+            # ensure df['predicted'] exists
+            if 'predicted' not in df.columns and 'predictions' in quantum_result:
+                df['predicted'] = quantum_result['predictions']
     else:
         df['predicted'] = df['clean_feedback'].map(rule_based_sentiment)
 
     agg_results = {}
-    total = len(df)
-    positive = int(df['predicted'].sum())
-    negative = total - positive
+    # Ensure predicted is numeric
+    df['predicted'] = pd.to_numeric(df.get('predicted'), errors='coerce').fillna(0).astype(int)
+    positive = int((df['predicted'] == 1).sum())
+    negative = int((df['predicted'] == 0).sum())
+    total = positive + negative
 
     if teacher_col and teacher_col in df.columns:
         teacher_mask = df[teacher_col].notna()
@@ -546,6 +652,11 @@ def process_dataframe(df, feedback_col=None, label_col=None, teacher_col=None, f
         agg=agg_results,
         metrics=metrics,
         saved_model_path=saved_model,
+        quantum_info={
+            'used': quantum_used,
+            'quantum': bool(quantum_result.get('quantum')) if quantum_result else False,
+            'note': ('Quantum pipeline run (PennyLane)' if (quantum_result and quantum_result.get('quantum')) else ('Simulated quantum fallback' if (quantum_result and not quantum_result.get('quantum')) else None)),
+        },
     )
 
 

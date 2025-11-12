@@ -1,0 +1,10 @@
+
+[dev]
+pytest
+flake8
+ruff
+
+[qnlp]
+lambeq>=0.3.0
+pennylane>=0.30.0
+pennylane-lightning

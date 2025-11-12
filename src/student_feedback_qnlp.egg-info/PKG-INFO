@@ -1,3 +1,11 @@
 Metadata-Version: 2.4
 Name: student-feedback-qnlp
 Version: 0.0.0
+Provides-Extra: qnlp
+Requires-Dist: lambeq>=0.3.0; extra == "qnlp"
+Requires-Dist: pennylane>=0.30.0; extra == "qnlp"
+Requires-Dist: pennylane-lightning; extra == "qnlp"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: flake8; extra == "dev"
+Requires-Dist: ruff; extra == "dev"

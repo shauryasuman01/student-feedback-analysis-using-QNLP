@@ -7,5 +7,9 @@ src/feedback_qnlp/utils.py
 src/student_feedback_qnlp.egg-info/PKG-INFO
 src/student_feedback_qnlp.egg-info/SOURCES.txt
 src/student_feedback_qnlp.egg-info/dependency_links.txt
+src/student_feedback_qnlp.egg-info/requires.txt
 src/student_feedback_qnlp.egg-info/top_level.txt
+tests/test_flask.py
 tests/test_preprocess.py
+tests/test_quantum.py
+tests/test_sentiment.py
